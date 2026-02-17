@@ -11,12 +11,11 @@ from attendance import get_session, set_session, delete_session, Session
 router = Router()
 gs_client = GoogleSheetsClient()
 
+
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
-# -------------------------------------------------------------------
-# Команда /start (личные сообщения)
-# -------------------------------------------------------------------
+
 @router.message(Command("start"), F.chat.type == "private")
 async def cmd_start(message: Message):
     await message.answer(
@@ -27,9 +26,7 @@ async def cmd_start(message: Message):
         "/status — количество отметившихся"
     )
 
-# -------------------------------------------------------------------
-# Команда /start_session (личные сообщения)
-# -------------------------------------------------------------------
+
 @router.message(Command("start_session"), F.chat.type == "private")
 async def cmd_start_session(message: Message):
     if not is_admin(message.from_user.id):
@@ -38,11 +35,9 @@ async def cmd_start_session(message: Message):
     if GROUP_CHAT_ID == 0:
         return await message.answer("❌ Ошибка: не указан ID группы в конфигурации.")
 
-    # Проверяем, нет ли уже активной сессии для этой группы
     if get_session(GROUP_CHAT_ID) and get_session(GROUP_CHAT_ID).active:
         return await message.answer("⚠️ В группе уже активна сессия отметки.")
 
-    # Разбор аргументов
     args = message.text.split()
     lesson_title = None
     timeout_minutes = None
@@ -52,7 +47,6 @@ async def cmd_start_session(message: Message):
         if len(args) >= 3 and args[2].isdigit():
             timeout_minutes = int(args[2])
     else:
-        # Автоопределение следующего занятия
         try:
             lesson_title = await gs_client.get_next_lesson_title()
             await message.answer(f"🆕 Автоматически определено следующее занятие: **{lesson_title}**")
@@ -60,10 +54,10 @@ async def cmd_start_session(message: Message):
             logging.error(f"Не удалось определить следующее занятие: {e}")
             return await message.answer("❌ Ошибка при определении следующего занятия. Укажите название вручную.")
 
-    # Отправляем сообщение с кнопкой в группу (без звука)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Отметиться", callback_data="mark")]
     ])
+
     try:
         msg = await message.bot.send_message(
             chat_id=GROUP_CHAT_ID,
@@ -74,9 +68,9 @@ async def cmd_start_session(message: Message):
         )
     except Exception as e:
         logging.error(f"Не удалось отправить сообщение в группу: {e}")
-        return await message.answer("❌ Ошибка при отправке сообщения в группу. Проверьте, добавлен ли бот в группу и есть ли у него права.")
+        return await message.answer(
+            "❌ Ошибка при отправке сообщения в группу. Проверьте, добавлен ли бот в группу и есть ли у него права.")
 
-    # Создаём сессию для группы
     session = Session(
         group_chat_id=GROUP_CHAT_ID,
         message_id=msg.message_id,
@@ -85,10 +79,8 @@ async def cmd_start_session(message: Message):
     )
     set_session(GROUP_CHAT_ID, session)
 
-    # Загружаем список студентов (фоново)
     asyncio.create_task(load_students_for_session(GROUP_CHAT_ID))
 
-    # Ответ админу
     response = f"✅ Сессия для занятия **{lesson_title}** запущена в группе."
     if timeout_minutes:
         asyncio.create_task(auto_stop_session(GROUP_CHAT_ID, message.bot, timeout_minutes * 60))
@@ -97,9 +89,7 @@ async def cmd_start_session(message: Message):
         response += " Остановите вручную командой /stop_session."
     await message.answer(response)
 
-# -------------------------------------------------------------------
-# Команда /stop_session (личные сообщения)
-# -------------------------------------------------------------------
+
 @router.message(Command("stop_session"), F.chat.type == "private")
 async def cmd_stop_session(message: Message):
     if not is_admin(message.from_user.id):
@@ -114,9 +104,7 @@ async def cmd_stop_session(message: Message):
 
     await finalize_session(GROUP_CHAT_ID, message.bot)
 
-# -------------------------------------------------------------------
-# Команда /status (личные сообщения)
-# -------------------------------------------------------------------
+
 @router.message(Command("status"), F.chat.type == "private")
 async def cmd_status(message: Message):
     if not is_admin(message.from_user.id):
@@ -133,9 +121,7 @@ async def cmd_status(message: Message):
         count = len(session.marked_users)
     await message.answer(f"👥 В группе отметилось: **{count}** человек.")
 
-# -------------------------------------------------------------------
-# Обработчик нажатия кнопки "Отметиться" (работает в группе)
-# -------------------------------------------------------------------
+
 @router.callback_query(F.data == "mark")
 async def callback_mark(callback: CallbackQuery):
     group_chat_id = callback.message.chat.id
@@ -155,7 +141,6 @@ async def callback_mark(callback: CallbackQuery):
 
     username = user.username.lower()
 
-    # Проверяем, есть ли студент в списке (если список загружен)
     if session.students_set is not None and username not in session.students_set:
         await callback.answer("❌ Вы не найдены в списке студентов. Отметка не засчитана.", show_alert=True)
         return
@@ -167,9 +152,7 @@ async def callback_mark(callback: CallbackQuery):
             session.marked_users.add(username)
             await callback.answer("✅ Вы отмечены!", show_alert=False)
 
-# -------------------------------------------------------------------
-# Вспомогательные функции
-# -------------------------------------------------------------------
+
 async def load_students_for_session(group_chat_id: int):
     """Загружает список студентов из Google Sheets и сохраняет в сессию."""
     session = get_session(group_chat_id)
@@ -182,15 +165,15 @@ async def load_students_for_session(group_chat_id: int):
     except Exception as e:
         logging.error(f"Failed to load students: {e}")
 
+
 async def auto_stop_session(group_chat_id: int, bot, delay: int):
-    """Автоматически завершает сессию через указанное количество секунд."""
     await asyncio.sleep(delay)
     session = get_session(group_chat_id)
     if session and session.active:
         await finalize_session(group_chat_id, bot)
 
+
 async def finalize_session(group_chat_id: int, bot):
-    """Завершает сессию: удаляет сообщение с кнопкой, обновляет Google Sheets, отправляет отчёт админу."""
     session = get_session(group_chat_id)
     if not session:
         return
@@ -199,13 +182,12 @@ async def finalize_session(group_chat_id: int, bot):
         session.active = False
         marked_ids = session.marked_users.copy()
 
-    # 1. Удаляем сообщение с кнопкой из группы
+    # Удаляем сообщение с кнопкой
     try:
         await bot.delete_message(chat_id=group_chat_id, message_id=session.message_id)
         logging.info(f"Сообщение с кнопкой удалено из группы {group_chat_id}")
     except Exception as e:
-        logging.warning(f"Не удалось удалить сообщение из группы: {e}")
-        # Пытаемся хотя бы убрать кнопку
+        logging.warning(f"Не удалось удалить сообщение: {e}")
         try:
             await bot.edit_message_text(
                 "🔒 Отметка завершена.",
@@ -216,37 +198,45 @@ async def finalize_session(group_chat_id: int, bot):
         except:
             pass
 
-    # 2. Получаем студентов из таблицы
+    # Получаем общее количество студентов в таблице
     try:
-        students = await gs_client.get_students()
+        total_students = await gs_client.get_all_students_count()
+    except Exception as e:
+        logging.error(f"Failed to get total students count: {e}")
+        total_students = 0
+
+    # Получаем студентов с username
+    try:
+        students_with_username = await gs_client.get_students()
     except Exception as e:
         logging.error(f"Failed to get students: {e}")
         await bot.send_message(session.admin_chat_id, "❌ Ошибка при получении списка студентов из таблицы.")
         delete_session(group_chat_id)
         return
 
-    # 3. Формируем статусы для Google Sheets
+    # Формируем статусы для студентов с username
     username_status = {}
-    for student in students:
+    for student in students_with_username:
         username = student["username"]
-        if not username:
-            status = '-'
-        else:
-            status = '+' if username in marked_ids else '-'
+        status = '+' if username in marked_ids else '-'
         username_status[username] = status
 
-    # 4. Записываем в Google Sheets
+    # Записываем в Google Sheets
     try:
-        await gs_client.update_attendance(session.lesson_title, username_status)
-        total = len(students)
+        students_without_username = await gs_client.update_attendance(session.lesson_title, username_status)
+
         present = len(marked_ids)
+        total_with_username = len(students_with_username)
+
         # Отправляем отчёт админу
         await bot.send_message(
             session.admin_chat_id,
             f"📊 **Итоги отметки**\n"
             f"Занятие: **{session.lesson_title}**\n"
-            f"Присутствовало: **{present}** из **{total}**\n"
-            f"Отсутствовало: **{total - present}**",
+            f"Присутствовало: **{present}**\n"
+            f"Всего студентов (с username): **{total_with_username}**\n"
+            f"Студентов без username: **{students_without_username}** (автоматически отсутствуют)\n"
+            f"Всего в таблице: **{total_students}**",
             disable_notification=True
         )
     except Exception as e:

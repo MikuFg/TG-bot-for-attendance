@@ -229,7 +229,10 @@ async def finalize_session(group_chat_id: int, bot):
     username_status = {}
     for student in students:
         username = student["username"]
-        status = '+' if username in marked_ids else '-'
+        if not username:
+            status = '-'
+        else:
+            status = '+' if username in marked_ids else '-'
         username_status[username] = status
 
     # 4. Записываем в Google Sheets

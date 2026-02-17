@@ -79,7 +79,7 @@ class GoogleSheetsClient:
 
         if not all_rows:
             print("Таблица пуста")
-            return
+            return 0
 
         header = all_rows[0]
 
@@ -100,44 +100,58 @@ class GoogleSheetsClient:
             col_letter = self._get_column_letter(col_index)
             print(f"Найден существующий столбец {col_letter} с названием '{lesson_title}'")
 
-        # Формируем обновления для каждой строки
+        # Формируем обновления для **ВСЕХ** строк
         updates = []
-        updated_count = 0
         students_without_username = 0
+        students_with_username = 0
 
         for row_idx, row in enumerate(all_rows[1:], start=2):
-            # Проверяем, есть ли username в колонке C
-            if len(row) < 3 or not row[2].strip():
-                students_without_username += 1
-                continue  # пропускаем, у них автоматически будет минус (пустая ячейка)
+            # Проверяем, есть ли данные в строке (хотя бы ФИО)
+            if len(row) < 1 or not row[0].strip():
+                continue  # пустая строка - пропускаем
 
-            username = row[2].strip().lstrip('@').lower()
-            status = username_status.get(username, '-')
+            # Определяем статус
+            status = '-'
+
+            # Если есть username, проверяем, отмечался ли он
+            if len(row) >= 3 and row[2].strip():
+                username = row[2].strip().lstrip('@').lower()
+                if username in username_status:
+                    status = username_status[username]
+                students_with_username += 1
+            else:
+                # У студентов без username всегда минус
+                status = '-'
+                students_without_username += 1
 
             cell_range = f"{col_letter}{row_idx}"
             updates.append({
                 'range': cell_range,
                 'values': [[status]]
             })
-            updated_count += 1
 
         if updates:
             print(f"Отправляем {len(updates)} обновлений в Google Sheets")
+            print(f"  - Студентов с username: {students_with_username}")
+            print(f"  - Студентов без username: {students_without_username}")
             print(f"Пример: {updates[0]}")
+
             try:
                 await worksheet.batch_update(updates)
-                print(f"✅ Успешно обновлено {updated_count} ячеек")
-                print(f"👤 Пропущено студентов без username: {students_without_username}")
+                print(f"✅ Успешно обновлено {len(updates)} ячеек")
             except Exception as e:
                 print(f"❌ Ошибка при batch_update: {e}")
                 # Пробуем обновить по одной ячейке
                 print("Пробуем обновить по одной ячейке...")
+                success_count = 0
                 for update in updates:
                     try:
                         await worksheet.update(update['range'], update['values'])
+                        success_count += 1
                         await asyncio.sleep(0.1)
                     except Exception as cell_error:
                         print(f"Ошибка при обновлении {update['range']}: {cell_error}")
+                print(f"Обновлено {success_count} из {len(updates)} ячеек")
         else:
             print("Нет данных для обновления")
 
